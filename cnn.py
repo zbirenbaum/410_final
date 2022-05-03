@@ -1,45 +1,121 @@
-from data_import import import_data
-import numpy as np
-from tensorflow import keras as ks
-import sys
-import numpy
-numpy.set_printoptions(threshold=sys.maxsize)
-# import librosa.display
+import tensorflow as tf
+from pixel_shuffler import PixelShuffler
 
-def get_encoding(labels):
-    return {
-        "encode": {label: i for i, label in enumerate(list(set(labels)))},
-        "decode": {i: label for i, label in enumerate(list(set(labels)))}
-    }
-def encode_labels(labels, encoding_map):
-    return [encoding_map["encode"][label] for label in labels]
-def decode_label(encoded_label, encoding_map):
-    return encoding_map["decode"][encoded_label]
+data_dir = "./data/images_original"
+size = (432, 288)
+batch_size = 32
+train_ds = tf.keras.utils.image_dataset_from_directory(
+  directory = data_dir,
+  validation_split=0.2,
+  subset="training",
+  seed=123,
+  image_size=size,
+  batch_size=1)
+val_ds = tf.keras.utils.image_dataset_from_directory(
+  directory = data_dir,
+  validation_split=0.2,
+  subset="validation",
+  seed=123,
+  image_size=size,
+  batch_size=32)
+normalization_layer = tf.keras.layers.Rescaling(1./255)
+normalized_ds = train_ds.map(lambda x, y: (normalization_layer(x), y))
+image_batch, labels_batch = next(iter(normalized_ds))
+first_image = image_batch[0]
+AUTOTUNE = tf.data.AUTOTUNE
+train_ds = train_ds.cache().prefetch(buffer_size=AUTOTUNE)
+val_ds = val_ds.cache().prefetch(buffer_size=AUTOTUNE)
 
-def get_X_y (path):
-    X, labels = import_data(path)
-    encoding_map = get_encoding(labels)
-    y = np.array(encode_labels(labels, encoding_map))
-    return X, y, encoding_map
+num_classes = 10 
 
-X, y, encoding_map = get_X_y('./data/images_original')
-X = X.reshape(X.shape[0], X.shape[1], X.shape[2], 1)
+#Stable at 63-65
+model = tf.keras.Sequential([
+  tf.keras.layers.Rescaling(1./255),
+  tf.keras.layers.Conv2D(16, 12, strides=(1,1), padding="same", activation='relu'),
+  tf.keras.layers.MaxPooling2D(3),
+  tf.keras.layers.Conv2D(16, 8, strides=(1,1), padding="same", activation='relu'),
+  tf.keras.layers.MaxPooling2D(2),
+  # tf.keras.layers.Conv2D(32, 2, strides=(1,1), padding="same", activation='relu'),
+  # tf.keras.layers.MaxPooling2D(2),
+  # tf.keras.layers.Conv2D(32, 2, strides=(1,1), padding="same", activation='relu'),
+  # tf.keras.layers.MaxPooling2D(2),
+  # tf.keras.layers.Conv2D(32, 2, strides=(1,1), padding="same", activation='relu'),
+  # tf.keras.layers.MaxPooling2D(2),
+  # tf.keras.layers.Conv2D(64, 2, strides=(1,1), padding="same", activation='relu'),
+  # tf.keras.layers.MaxPooling2D(2),
+  tf.keras.layers.Conv2D(256, 2, strides=(1,1), padding="same", activation='relu'),
+  tf.keras.layers.Dropout(.3),
+  tf.keras.layers.Conv2D(128, 2, strides=(1,1), padding="same", activation='relu'),
+  tf.keras.layers.Dropout(.3),
+  tf.keras.layers.MaxPooling2D(),
+  tf.keras.layers.Flatten(),
+  tf.keras.layers.Dense(128, activation='relu'),
+  tf.keras.layers.Dense(256, activation='relu'),
+  tf.keras.layers.Dense(num_classes)
+])
+
+#Benchmark
+
+# model.compile(loss=tf.keras.losses.categorical_crossentropy, optimizer=tf.keras.optimizers.Adam(), metrics=['accuracy'])
+model.compile(
+  optimizer=tf.keras.optimizers.Adamax(),
+  loss=tf.losses.SparseCategoricalCrossentropy(from_logits=True),
+  metrics=['accuracy'])
+
+model.fit(
+  train_ds,
+  validation_data=val_ds,
+  epochs=1000)
 
 
-model = ks.Sequential()
-model.add(ks.layers.Conv2D(filters=4, kernel_size=(128, 128), activation='relu', input_shape=(256,256,3)))
-model.add(ks.layers.AveragePooling2D())
-model.add(ks.layers.Conv2D(filters=8, kernel_size=(64, 64), activation='relu', input_shape=(256,256,3)))
-model.add(ks.layers.AveragePooling2D())
-model.add(ks.layers.Conv2D(filters=16, kernel_size=(32, 32), activation='relu', input_shape=(256,256,3)))
-model.add(ks.layers.AveragePooling2D())
-model.add(ks.layers.Conv2D(filters=32, kernel_size=(8, 8), activation='relu', input_shape=(256,256,3)))
-model.add(ks.layers.AveragePooling2D())
-model.add(ks.layers.Conv2D(filters=16, kernel_size=(3, 3), activation='relu'))
-model.add(ks.layers.AveragePooling2D())
-model.add(ks.layers.Flatten())
-model.add(ks.layers.Dense(units=120, activation='relu'))
-model.add(ks.layers.Dense(units=84, activation='relu'))
-model.add(ks.layers.Dense(units=10, activation = 'softmax'))
-model.compile(loss="sparse_categorical_crossentropy", optimizer="adam", metrics=["accuracy"])
-model.fit(np.array(X), np.array(y), batch_size=100, epochs=10, validation_split=0.15)
+#stable at 70-72 after ~400 epoch
+# model = tf.keras.Sequential([
+#   tf.keras.layers.Rescaling(1./255),
+#   tf.keras.layers.Conv2D(32, 8, strides=(1,1), padding="same", activation='relu'),
+#   tf.keras.layers.MaxPooling2D(4),
+#   tf.keras.layers.Conv2D(32, 8, strides=(1,1), padding="same", activation='relu'),
+#   tf.keras.layers.MaxPooling2D(4),
+#   tf.keras.layers.Conv2D(32, 4, strides=(1,1), padding="same", activation='relu'),
+#   tf.keras.layers.MaxPooling2D(3),
+#   tf.keras.layers.Conv2D(64, 3, strides=(1,1), padding="same", activation='relu'),
+#   tf.keras.layers.MaxPooling2D(2),
+#   tf.keras.layers.Dropout(.3),
+#   tf.keras.layers.Conv2D(128, 2, strides=(1,1), padding="same", activation='relu'),
+#   tf.keras.layers.Dropout(.3),
+#   tf.keras.layers.MaxPooling2D(),
+#   tf.keras.layers.Flatten(),
+#   tf.keras.layers.Dense(128, activation='relu'),
+#   tf.keras.layers.Dense(256, activation='relu'),
+#   tf.keras.layers.Dense(num_classes)
+# ])
+#Can hit about 64
+# model = tf.keras.Sequential([
+#   tf.keras.layers.Rescaling(1./255),
+#   tf.keras.layers.Conv2D(16, 4, activation='relu'),
+#   tf.keras.layers.Dropout(.3),
+#   tf.keras.layers.MaxPooling2D(4),
+#   tf.keras.layers.Conv2D(32, 4, activation='relu'),
+#   tf.keras.layers.Dropout(.3),
+#   tf.keras.layers.MaxPooling2D(4),
+#   tf.keras.layers.Conv2D(32, 2, activation='relu'),
+#   tf.keras.layers.MaxPooling2D(),
+#   tf.keras.layers.Dropout(.3),
+#   tf.keras.layers.Conv2D(64, 3, activation='relu'),
+#   tf.keras.layers.Dropout(.3),
+#   tf.keras.layers.MaxPooling2D(),
+#   tf.keras.layers.Flatten(),
+#   tf.keras.layers.Dense(128, activation='relu'),
+#   tf.keras.layers.Dense(256, activation='relu'),
+#   tf.keras.layers.Dense(num_classes)
+# ])
+# model = tf.keras.Sequential([
+#     tf.keras.layers.Rescaling(1./255),
+#     tf.keras.layers.Conv2D(32, kernel_size=(3, 3), activation='relu'),
+#     tf.keras.layers.Conv2D(64, kernel_size=(3, 3), activation='relu'),
+#     tf.keras.layers.MaxPooling2D(pool_size=(2, 2)),
+#     tf.keras.layers.Dropout(0.25),
+#     tf.keras.layers.Flatten(),
+#     tf.keras.layers.Dense(128, activation='relu'),
+#     tf.keras.layers.Dropout(0.5),
+#     tf.keras.layers.Dense(num_classes, activation='softmax'),
+# ])

@@ -2,6 +2,7 @@ import os
 import pickle
 import numpy as np
 import cv2
+import tensorflow as tf
 
 def border_removal(image):
     image = cv2.bitwise_not(image)
@@ -14,57 +15,32 @@ def get_labels(path):
 def list_path_images(path, label):
     return os.listdir(os.path.join(path, label))
 
-def load_image(path, label, file):
-    image = cv2.imread(os.path.join(path, label, file))
-    image = cv2.resize(border_removal(image), dsize=(256, 256), interpolation=cv2.INTER_LANCZOS4)
-    print(image.shape)
-    return image
+def tf_load(filepath):
+    tf_filepath = tf.convert_to_tensor(filepath, dtype=tf.string)
+    tf_img_string = tf.read_file(tf_filepath)
+    tf_decoded = tf.image.decode_png(tf_img_string, channels=3)
+    tf_bgr = tf_decoded[:, :, ::-1]
+    tf_float = tf.to_float(tf_bgr)
+    return tf_float
 
+def load_image(path, method=None):
+    return method == "cv2" and cv2.imread(path) or tf_load(path)
 
-def file_image_tups(path, label):
-    return {file: (os.path.join(path, label, file), load_image(path, label, file)) for file in list_path_images(path, label)}
-
-def get_data(path, labels):
-    return {label: file_image_tups(path, label) for label in labels}
-
-def load_image_data(path, file_dict):
-    return dict(map(lambda kv: (
-        kv[0], load_image(path, kv[0], kv[1])), file_dict.items()
-    ))
-
-def load_data_dict(path):
-    return get_data(path, get_labels(path))
-
-def format_data(data):
-    model_data = {"X": [], "y": []}
-    for label, lst in data.items():
-        for _, file in lst.items():
-            model_data['y'].append(label)
-            model_data['X'].append(np.array(file[1]))
-    model_data['X'] = np.array(model_data['X'])
-    model_data['y'] = np.array(model_data['y'])
-    return model_data
-
-def get_list(data):
-    return [(np.array(data[label][image][1]), label) for label in data for image in data[label]]
-
-def labels_to_numerical(labels):
-    labels = list(labels)
-    return np.array([list(set(labels)).index(label) for label in labels])
+def format_data(path):
+    data = []
+    label_list = []
+    path_labels = get_labels(path)
+    for label in path_labels:
+        for image_name in list_path_images(path, label):
+            imgpath = os.path.join(path, label, image_name)
+            data.append(load_image(imgpath))
+            label_list.append(label)
+    return (data, label_list)
 
 def import_data(path):
     try:
         model_data = pickle.load(open("cache.pkl", "rb"))
     except:
-        model_data = format_data(load_data_dict(path))
+        model_data = format_data(path)
         pickle.dump(model_data, open("cache.pkl", "wb"), protocol=pickle.HIGHEST_PROTOCOL)
-    return (model_data['X'], model_data['y'])
-
-# def trim(im):
-#     bg = Image.new(im.mode, im.size, im.getpixel((0,0)))
-#     diff = ImageChops.difference(im, bg)
-#     diff = ImageChops.add(diff, diff, 2.0, -100)
-#     bbox = diff.getbbox()
-#     if bbox:
-#         return im.crop(bbox)
-
+    return model_data
